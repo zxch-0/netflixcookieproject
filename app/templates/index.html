@@ -9,19 +9,24 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="logo">N</span>
-    <div><h1>Netflix Dispo Checker</h1><p class="sub">Paste cookies, get plans sorted by tier with NFToken links.</p></div>
+    <div><h1>Netflix Dispo Checker</h1><p class="sub">Drop cookie files or paste them, get plans sorted by tier with NFToken links.</p></div>
   </div>
   <div class="topbar-right">
     <input id="token" class="token" type="password" placeholder="access token" autocomplete="off" hidden>
     <span id="proxyInfo" class="pill"></span>
   </div>
 </header>
-
 <main>
   <section class="card">
-    <label class="field"><span class="label">Cookies</span>
+    <div id="drop" class="drop">
+      <input id="files" type="file" multiple accept=".txt,.json,text/plain,application/json" hidden>
+      <p class="drop-title">Drop <b>.txt</b> / <b>.json</b> cookie files here</p>
+      <p class="drop-sub">or <button id="browse" class="link" type="button">browse files</button></p>
+    </div>
+    <div id="fileList" class="file-list"></div>
+    <label class="field"><span class="label">Or paste cookies</span>
       <textarea id="cookies" spellcheck="false" placeholder="Netscape, JSON export or NetflixId=...;SecureNetflixId=...
-Several accounts can be pasted at once."></textarea>
+Files and pasted text are combined in the same run."></textarea>
     </label>
     <div class="grid">
       <fieldset class="field devices"><legend class="label">NFToken links</legend>
@@ -38,30 +43,25 @@ Several accounts can be pasted at once."></textarea>
     </div>
     <div class="actions">
       <button id="run" class="primary">Check cookies</button>
+      <button id="clear" class="ghost" type="button">Clear files</button>
       <button id="stop" class="ghost" disabled>Stop</button>
       <span id="status" class="status"></span>
     </div>
   </section>
-
   <section id="progressWrap" class="card" hidden>
     <div class="progress-head"><strong id="progressText">0 / 0</strong><span id="counters" class="counters"></span></div>
     <div class="bar"><div id="bar" class="bar-fill"></div></div>
-    <div class="actions">
-      <a id="dlTxt" class="ghost" href="#">Download TXT</a>
-      <a id="dlJson" class="ghost" href="#">Download JSON</a>
-    </div>
+    <div class="actions"><a id="dlTxt" class="ghost" href="#">Download TXT</a><a id="dlJson" class="ghost" href="#">Download JSON</a></div>
   </section>
-
   <section id="filters" class="chips" hidden></section>
   <section id="results"></section>
 </main>
-
 <template id="resultTpl">
   <article class="result">
     <div class="result-head">
       <span class="rank"></span><span class="badge plan"></span><span class="country"></span>
       <span class="badge warn hold" hidden>on hold</span><span class="badge warn extra" hidden>extra member</span>
-      <span class="spacer"></span>
+      <span class="source"></span><span class="spacer"></span>
       <button class="copy ghost" data-copy="links">Copy links</button>
       <button class="copy ghost" data-copy="cookie">Copy cookie</button>
     </div>
@@ -79,7 +79,6 @@ Several accounts can be pasted at once."></textarea>
     </div>
   </article>
 </template>
-
 <script src="/static/app.js"></script>
 </body>
 </html>
