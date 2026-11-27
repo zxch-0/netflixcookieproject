@@ -1,14 +1,12 @@
 const $ = (id) => document.getElementById(id);
-const state = { jobId: null, timer: null, filter: "all", results: [], token: localStorage.getItem("nfx_token") || "", config: null };
+const state = { jobId: null, timer: null, filter: "all", results: [], picked: [], token: localStorage.getItem("nfx_token") || "", config: null };
 
-function headers() {
-  const out = { "Content-Type": "application/json" };
-  if (state.token) out["X-Access-Token"] = state.token;
-  return out;
+function authHeaders() {
+  return state.token ? { "X-Access-Token": state.token } : {};
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: headers() });
+async function send(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
   if (response.status === 401) { $("token").hidden = false; throw new Error("access token required"); }
   if (!response.ok) {
     let detail = response.statusText;
@@ -18,6 +16,8 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+const api = (path, body) => send(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
 function setStatus(text, kind = "") {
   $("status").textContent = text;
   $("status").style.color = kind === "error" ? "#ff6b6b" : kind === "ok" ? "#35c46a" : "";
@@ -25,7 +25,7 @@ function setStatus(text, kind = "") {
 
 async function loadConfig() {
   try {
-    const config = await api("/api/config");
+    const config = await send("/api/config");
     state.config = config;
     if (config.auth_required) { $("token").hidden = false; $("token").value = state.token; }
     if (config.server_proxies) $("proxyInfo").textContent = `${config.server_proxies} server proxies`;
@@ -38,21 +38,55 @@ async function loadConfig() {
   } catch (_) { setStatus("config unavailable", "error"); }
 }
 
+function addFiles(fileList) {
+  [...fileList].forEach((file) => {
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".txt") && !name.endsWith(".json") && !/text|json/.test(file.type)) return;
+    if (state.picked.some((item) => item.name === file.name && item.size === file.size)) return;
+    state.picked.push(file);
+  });
+  renderFiles();
+}
+
+function renderFiles() {
+  $("fileList").innerHTML = "";
+  state.picked.forEach((file, index) => {
+    const chip = document.createElement("div");
+    chip.className = "file-chip";
+    const label = document.createElement("span");
+    label.textContent = file.name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.addEventListener("click", () => { state.picked.splice(index, 1); renderFiles(); });
+    chip.append(label, remove);
+    $("fileList").appendChild(chip);
+  });
+}
+
 async function startJob() {
   const cookies = $("cookies").value.trim();
-  if (!cookies) { setStatus("paste at least one cookie", "error"); return; }
+  if (!state.picked.length && !cookies) { setStatus("add a cookie file or paste cookies", "error"); return; }
   state.token = $("token").value.trim() || state.token;
   localStorage.setItem("nfx_token", state.token);
   $("run").disabled = true;
-  setStatus("queued…");
+  setStatus("uploading…");
   try {
-    const body = {
-      cookies,
-      devices: [...document.querySelectorAll('input[name="device"]:checked')].map((el) => el.value),
-      concurrency: Number($("concurrency").value),
-      proxies: $("proxies").value.trim() || null,
-    };
-    const job = await api("/api/jobs", { method: "POST", body: JSON.stringify(body) });
+    const devices = [...document.querySelectorAll('input[name="device"]:checked')].map((el) => el.value);
+    const concurrency = Number($("concurrency").value);
+    const proxies = $("proxies").value.trim() || null;
+    let job;
+    if (state.picked.length) {
+      const form = new FormData();
+      state.picked.forEach((file) => form.append("files", file));
+      if (cookies) form.append("cookies", cookies);
+      form.append("devices", devices.join(","));
+      form.append("concurrency", String(concurrency));
+      if (proxies) form.append("proxies", proxies);
+      job = await send("/api/jobs/files", { method: "POST", body: form });
+    } else {
+      job = await api("/api/jobs", { cookies, devices, concurrency, proxies });
+    }
     state.jobId = job.job_id;
     state.filter = "all";
     $("results").innerHTML = "";
@@ -70,7 +104,7 @@ async function poll() {
   if (!state.jobId) return;
   clearTimeout(state.timer);
   try {
-    const job = await api(`/api/jobs/${state.jobId}`);
+    const job = await send(`/api/jobs/${state.jobId}`);
     render(job);
     if (["queued", "running"].includes(job.status)) {
       state.timer = setTimeout(poll, 1200);
@@ -82,8 +116,8 @@ async function poll() {
   } catch (error) { setStatus(error.message, "error"); $("run").disabled = false; }
 }
 
-function rankOf(plan) { return state.config?.plans?.find((item) => item.key === plan)?.rank || 0; }
-function planLabel(plan) { return state.config?.plans?.find((item) => item.key === plan)?.label || plan; }
+const rankOf = (plan) => state.config?.plans?.find((item) => item.key === plan)?.rank || 0;
+const planLabel = (plan) => state.config?.plans?.find((item) => item.key === plan)?.label || plan;
 
 function render(job) {
   state.results = job.results;
@@ -116,6 +150,7 @@ function renderResults() {
     node.querySelector(".rank").textContent = `#${position + 1}`;
     node.querySelector(".plan").textContent = result.plan_label;
     node.querySelector(".country").textContent = result.country || "—";
+    node.querySelector(".source").textContent = result.source || "";
     node.querySelector(".hold").hidden = !result.on_hold;
     node.querySelector(".extra").hidden = !result.extra_member;
     node.querySelector(".email").textContent = result.email || "—";
@@ -150,12 +185,15 @@ async function copy(button, result) {
 
 async function stopJob() {
   if (!state.jobId) return;
-  try { await api(`/api/jobs/${state.jobId}`, { method: "DELETE" }); setStatus("stopping…"); }
+  try { await send(`/api/jobs/${state.jobId}`, { method: "DELETE" }); setStatus("stopping…"); }
   catch (error) { setStatus(error.message, "error"); }
 }
 
 $("run").addEventListener("click", startJob);
 $("stop").addEventListener("click", stopJob);
+$("browse").addEventListener("click", () => $("files").click());
+$("files").addEventListener("change", (event) => { addFiles(event.target.files); event.target.value = ""; });
+$("clear").addEventListener("click", () => { state.picked = []; renderFiles(); });
 $("concurrency").addEventListener("input", (event) => { $("concOut").textContent = event.target.value; });
 $("token").addEventListener("change", (event) => { state.token = event.target.value.trim(); localStorage.setItem("nfx_token", state.token); });
 $("filters").addEventListener("click", (event) => {
@@ -165,5 +203,11 @@ $("filters").addEventListener("click", (event) => {
   renderFilters();
   renderResults();
 });
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach((type) => drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((type) => drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (event) => { if (event.dataTransfer?.files) addFiles(event.dataTransfer.files); });
+drop.addEventListener("click", (event) => { if (event.target === drop) $("files").click(); });
 
 loadConfig();
