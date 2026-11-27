@@ -22,9 +22,9 @@ services:
       - key: JOB_TTL_SECONDS
         value: 3600
       - key: REQUEST_TIMEOUT_SECONDS
-        value: 20
+        value: 12
       - key: CHECK_RETRIES
-        value: 3
+        value: 2
       - key: NFTOKEN_ATTEMPTS
         value: 3
       - key: NFTOKEN_ENABLED

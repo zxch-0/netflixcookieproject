@@ -9,6 +9,9 @@ Deployable as-is on Render through the bundled blueprint.
 - Every file is split into separate accounts, duplicates dropped across all inputs
 - NFToken links with expiry, results sorted by tier, extra-member and on-hold flags
 - Proxy pool with rotation and retries on 403/429/5xx, TXT / JSON export
+- Strict verdicts: only a `/login` bounce, a login page, `401` or `404` is reported invalid. Proxies, timeouts and `5xx` land in errors, so invalids stay trustworthy
+- Keep-alive sessions, compiled parsers and incremental rendering to stay fast on 10k batches
+=======
 
 ## Deploy on Render
 
@@ -30,8 +33,8 @@ The free plan sleeps when idle.
 | `MAX_COOKIES_PER_JOB` | 150 | Accounts checked per job |
 | `MAX_ACTIVE_JOBS` | 4 | Concurrent jobs before 429 |
 | `JOB_TTL_SECONDS` | 3600 | How long finished jobs stay in memory |
-| `REQUEST_TIMEOUT_SECONDS` | 20 | Per-request timeout |
-| `CHECK_RETRIES` | 3 | Attempts per account, proxy rotated each try |
+| `REQUEST_TIMEOUT_SECONDS` | 12 | Per-request timeout |
+| `CHECK_RETRIES` | 2 | Attempts per account, proxy rotated each try |
 | `NFTOKEN_ATTEMPTS` | 3 | Attempts for token generation |
 | `NFTOKEN_ENABLED` | true | Disable token generation entirely |
 
@@ -62,6 +65,13 @@ Single paste, JSON:
       -d '{"cookies": ".netflix.com\tTRUE\t/\tTRUE\t0\tNetflixId\tXXX", "devices": ["pc"]}'
 
 Both return 202 with a `job_id`, poll `GET /api/jobs/{id}` until `status` is `done`.
+
+## Tests
+
+    pip install -r requirements-dev.txt
+    pytest
+
+The suite covers cookie parsing, zip expansion, plan mapping, verdict classification against a mocked Netflix and the full HTTP API. CI runs it on every push.
 
 ## Limitations
 
