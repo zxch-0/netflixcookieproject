@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: netflix-dispo-checker
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DEFAULT_CONCURRENCY
+        value: 8
+      - key: MAX_CONCURRENCY
+        value: 24
+      - key: MAX_COOKIES_PER_JOB
+        value: 150
+      - key: MAX_ACTIVE_JOBS
+        value: 4
+      - key: JOB_TTL_SECONDS
+        value: 3600
+      - key: REQUEST_TIMEOUT_SECONDS
+        value: 20
+      - key: CHECK_RETRIES
+        value: 3
+      - key: NFTOKEN_ATTEMPTS
+        value: 3
+      - key: NFTOKEN_ENABLED
+        value: "true"
+      - key: ACCESS_TOKEN
+        sync: false
+      - key: PROXY_LIST
+        sync: false
