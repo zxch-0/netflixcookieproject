@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Netflix Cookie Project</title>
+<meta name="description" content="Vérificateur de cookies Netflix avec import par glisser-déposer.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="bg" aria-hidden="true">
+  <span class="orb orb-1"></span>
+  <span class="orb orb-2"></span>
+  <span class="orb orb-3"></span>
+</div>
+<div class="grid" aria-hidden="true"></div>
+<div class="stars" aria-hidden="true"></div>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div class="watermark" aria-hidden="true">N</div>
+<div class="deco deco-tl" aria-hidden="true"></div>
+<div class="deco deco-tr" aria-hidden="true"></div>
+<div class="deco deco-bl" aria-hidden="true"></div>
+<div class="deco deco-br" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">N</span>
+    <div>
+      <h1>Cookie Project</h1>
+      <p class="sub">Import par fichier, glisser-déposer ou collage</p>
+    </div>
+  </div>
+  <div class="counter">
+    <strong id="count">0</strong>
+    <span>cookie(s) en liste</span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="panel">
+    <h2>1. Importer</h2>
+
+    <div id="drop" class="drop" tabindex="0" role="button" aria-label="Zone d'import de fichiers">
+      <input id="file" type="file" multiple accept=".txt,.json,.csv,text/plain,application/json" hidden>
+      <span class="drop-icon">+</span>
+      <p class="drop-title">Dépose tes fichiers ici</p>
+      <p class="drop-hint">ou clique pour choisir — .txt, .json, .csv</p>
+    </div>
+
+    <div class="paste">
+      <label for="text">Ou colle directement</label>
+      <textarea id="text" spellcheck="false" placeholder="NetflixId=...; SecureNetflixId=...
+ou format Netscape, ou JSON exporté par une extension"></textarea>
+      <div class="paste-actions">
+        <button id="add" class="btn btn-ghost" type="button">Ajouter à la liste</button>
+        <button id="paste-clipboard" class="btn btn-ghost" type="button">Coller depuis le presse-papiers</button>
+      </div>
+    </div>
+
+    <p id="import-msg" class="msg" role="status"></p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>2. Vérifier</h2>
+      <div class="toolbar">
+        <button id="start" class="btn btn-primary" type="button">Lancer la vérification</button>
+        <button id="export" class="btn" type="button">Exporter les valides</button>
+        <button id="clear" class="btn" type="button">Vider</button>
+      </div>
+    </div>
+
+    <div class="progress" aria-hidden="true"><span id="bar"></span></div>
+
+    <div class="stats">
+      <span class="stat"><em id="st-valid">0</em> valides</span>
+      <span class="stat"><em id="st-invalid">0</em> invalides</span>
+      <span class="stat"><em id="st-error">0</em> erreurs</span>
+      <span class="stat"><em id="st-idle">0</em> en attente</span>
+    </div>
+
+    <div class="table-scroll">
+      <table id="results">
+        <thead>
+          <tr>
+            <th scope="col">#</th>
+            <th scope="col">Identifiant</th>
+            <th scope="col">Compte</th>
+            <th scope="col">Statut</th>
+            <th scope="col">Détail</th>
+            <th scope="col"></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="empty">Aucun cookie importé pour le moment.</p>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>Node.js · Express · aucune donnée envoyée ailleurs qu'à Netflix</span>
+    <span id="health" class="health">—</span>
+  </footer>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,7 +1,4 @@
-__pycache__/
-*.py[cod]
-.venv/
-venv/
+node_modules/
 .env
-cookies/
-*.log
+.DS_Store
+npm-debug.log*
