@@ -1,0 +1,17 @@
+{
+  "name": "netflixcookieproject",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Vérificateur de cookies Netflix avec import par glisser-déposer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
