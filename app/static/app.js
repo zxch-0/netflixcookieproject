@@ -154,12 +154,18 @@ async function poll(attempt = 0) {
   try {
     job = await send(`/api/jobs/${state.jobId}?limit=300`);
   } catch (error) {
-    if (attempt < 10 && state.jobId) {
+    const lost = /job not found/i.test(error.message);
+    if (!lost && attempt < 10 && state.jobId) {
       setStatus(`reconnecting… ${error.message}`);
       state.timer = setTimeout(() => poll(attempt + 1), Math.min(6000, 600 * (attempt + 1)));
       return;
     }
-    setStatus(error.message, "error");
+    setStatus(
+      lost && state.results.length
+        ? "job lost (worker restart) — partial results kept, run again to finish"
+        : error.message,
+      "error"
+    );
     $("run").disabled = false;
     $("stop").disabled = true;
     return;
@@ -174,7 +180,9 @@ async function poll(attempt = 0) {
     try { render(await send(`/api/jobs/${state.jobId}?limit=5000`)); } catch (_) {}
     $("run").disabled = false;
     $("stop").disabled = true;
-    setStatus(job.status === "cancelled" ? "stopped" : "finished", "ok");
+    if (job.status === "cancelled") setStatus("stopped", "ok");
+    else if (job.status === "lost") setStatus("job lost (worker restart) — partial results kept", "error");
+    else setStatus("finished", "ok");
   }
 }
 
