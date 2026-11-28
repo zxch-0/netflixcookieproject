@@ -28,11 +28,13 @@ Plusieurs comptes peuvent être collés d'un coup : séparateurs `---` / `###` /
 | --- | --- | --- |
 | GET | `/` | Interface |
 | GET | `/healthz` | Sonde de santé |
-| GET | `/api/version` | Version, limites, workers |
-| GET | `/api/config` | Limites (protégé par jeton) |
-| POST | `/api/parse` | `{"text": "..."}` → comptes normalisés |
-| POST | `/api/check` | `{"accounts": [...]}` → résultats d'un lot |
-| POST | `/api/check-text` | Parse + vérifie le premier lot |
+| GET | `/api/config` | Limites, plans et devices |
+| POST | `/api/jobs` | `{"cookies": "..."}` → job asynchrone |
+| POST | `/api/jobs/files` | Fichiers `.txt` / `.json` / `.csv` / `.zip` → job |
+| GET | `/api/jobs/{job_id}` | Progression et résultats triés par plan |
+| GET | `/api/jobs/{job_id}/report.txt` | Rapport texte |
+| GET | `/api/jobs/{job_id}/report.json` | Rapport JSON |
+| DELETE | `/api/jobs/{job_id}` | Annule un job |
 
 L'interface découpe automatiquement la vérification en lots pour rester sous le
 timeout du proxy.
@@ -42,18 +44,23 @@ timeout du proxy.
 | Variable | Défaut | Rôle |
 | --- | --- | --- |
 | `ACCESS_TOKEN` | vide | Jeton partagé ; vide = accès libre |
-| `CHECK_WORKERS` | `12` | Threads de vérification |
-| `CHECK_MAX_CONNECTIONS` | `24` | Taille du pool HTTP |
-| `CHECK_CONNECT_TIMEOUT` | `5` | Timeout de connexion (s) |
-| `CHECK_READ_TIMEOUT` | `12` | Timeout de lecture (s) |
-| `MAX_ACCOUNTS_PER_REQUEST` | `25` | Comptes par lot |
-| `MAX_PASTE_CHARS` | `2000000` | Taille max d'un collage |
+| `PROXY_LIST` | vide | Proxys serveur (`host:port:user:pass`, un par ligne) |
+| `DEFAULT_CONCURRENCY` | `8` | Workers par défaut |
+| `MAX_CONCURRENCY` | `32` | Workers max par job |
+| `MAX_COOKIES_PER_JOB` | `250` | Comptes max par job |
+| `MAX_ACTIVE_JOBS` | `8` | Jobs simultanés |
+| `JOB_TTL_SECONDS` | `3600` | Rétention des jobs (s) |
+| `REQUEST_TIMEOUT_SECONDS` | `12` | Timeout HTTP (s) |
+| `CHECK_RETRIES` | `2` | Tentatives par cookie |
+| `NFTOKEN_ATTEMPTS` | `3` | Tentatives NFToken |
+| `NFTOKEN_ENABLED` | `true` | Génère les liens NFToken |
+| `STATE_DIR` | `/tmp/netflix-dispo-checker` | Snapshots des jobs |
 | `PORT` | `8000` | Port d'écoute |
 
 ## Développement
 
-    pip install -r requirements.txt
-    uvicorn app:app --reload
+    pip install -r requirements-dev.txt
+    uvicorn app.main:app --reload
     pytest
 
 ## Déploiement
@@ -61,3 +68,7 @@ timeout du proxy.
 Le fichier `render.yaml` décrit le service (build, démarrage, healthcheck). Un
 `Dockerfile` est fourni pour tout autre hébergeur. Pensez à définir
 `ACCESS_TOKEN` pour restreindre l'accès public.
+
+Le package `app` est le point d'entrée ASGI : `uvicorn app.main:app` (ou
+`uvicorn app:app`, ré-exporté par `app/__init__.py`). Le module legacy `app.py`
+a été supprimé pour éviter le conflit de nom avec le package.

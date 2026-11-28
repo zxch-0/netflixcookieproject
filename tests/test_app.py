@@ -1,40 +1,16 @@
-import pytest
-from fastapi.testclient import TestClient
+from dataclasses import replace
 
-import app as app_module
-import netflix_checker
+from fastapi import FastAPI
 
-
-@pytest.fixture()
-def client():
-    return TestClient(app_module.app)
+import app as package
+from app import main
+from conftest import NETSCAPE, wait
 
 
-@pytest.fixture(autouse=True)
-def fake_checker(monkeypatch):
-    def fake_check_many(accounts):
-        return [
-            {
-                "id": account.index,
-                "label": account.label,
-                "valid": True,
-                "status": "valid",
-                "plan": "Premium",
-                "country": "FR",
-                "email": "a@b.c",
-                "member_since": "",
-                "profiles": ["Alice"],
-                "profiles_count": 1,
-                "http_status": 200,
-                "final_path": "/account",
-                "elapsed_ms": 12,
-                "error": "",
-                "cookies": dict(account.cookies),
-            }
-            for account in accounts
-        ]
-
-    monkeypatch.setattr(netflix_checker, "check_many", fake_check_many)
+def test_package_exports_asgi_app():
+    """`uvicorn app:app` doit trouver une application, pas une docstring."""
+    assert isinstance(package.app, FastAPI)
+    assert package.app is main.app
 
 
 def test_healthz(client):
@@ -44,52 +20,40 @@ def test_healthz(client):
 def test_index_served(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "Netflix Cookie Checker" in response.text
+    assert "Netflix Dispo Checker" in response.text
 
 
-def test_parse_then_check(client):
-    parsed = client.post("/api/parse", json={"text": "NetflixId=a; SecureNetflixId=b"})
-    assert parsed.status_code == 200
-    accounts = parsed.json()["accounts"]
-    assert parsed.json()["count"] == 1
-
-    checked = client.post("/api/check", json={"accounts": accounts})
-    assert checked.status_code == 200
-    payload = checked.json()
-    assert payload["results"][0]["valid"] is True
-    assert payload["summary"]["valid"] == 1
+def test_static_assets_served(client):
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/style.css").status_code == 200
 
 
-def test_parse_empty(client):
-    assert client.post("/api/parse", json={"text": ""}).status_code == 400
+def test_job_runs_to_completion(client):
+    response = client.post("/api/jobs", json={"cookies": NETSCAPE, "devices": ["pc"]})
+    assert response.status_code == 202
+    payload = wait(client, response.json()["job_id"])
+    assert payload["total"] == 1
+    assert payload["results"][0]["status"] == "valid"
+    assert payload["results"][0]["plan"] == "premium"
 
 
-def test_parse_without_netflix_id(client):
-    assert client.post("/api/parse", json={"text": "Foo=bar"}).status_code == 400
+def test_concurrency_is_clamped(client):
+    response = client.post("/api/jobs", json={"cookies": NETSCAPE, "concurrency": 999})
+    assert response.status_code == 202
+    assert response.json()["concurrency"] == 1
 
 
-def test_check_without_accounts(client):
-    assert client.post("/api/check", json={"accounts": []}).status_code == 400
-
-
-def test_check_batch_limit(client, monkeypatch):
-    monkeypatch.setattr(app_module, "MAX_BATCH", 2)
-    accounts = [
-        {"id": index, "label": f"Compte {index}", "cookies": {"NetflixId": str(index)}}
-        for index in range(3)
-    ]
-    assert client.post("/api/check", json={"accounts": accounts}).status_code == 400
+def test_config_lists_plans(client):
+    payload = client.get("/api/config").json()
+    assert payload["auth_required"] is False
+    assert any(plan["key"] == "premium" for plan in payload["plans"])
 
 
 def test_access_token_required(client, monkeypatch):
-    monkeypatch.setattr(app_module, "ACCESS_TOKEN", "secret")
-    assert client.get("/api/config").status_code == 401
-    ok = client.get("/api/config", headers={"X-Access-Token": "secret"})
-    assert ok.status_code == 200
-    assert ok.json()["auth_required"] is True
+    monkeypatch.setattr(main, "SETTINGS", replace(main.SETTINGS, token="secret"))
+    assert client.get("/api/jobs/unknown").status_code == 401
+    assert client.get("/api/jobs/unknown", headers={"X-Access-Token": "secret"}).status_code == 404
 
 
-def test_check_text_endpoint(client):
-    response = client.post("/api/check-text", json={"text": "NetflixId=a; SecureNetflixId=b"})
-    assert response.status_code == 200
-    assert response.json()["results"][0]["plan"] == "Premium"
+def test_unknown_job_is_404(client):
+    assert client.get("/api/jobs/deadbeef").status_code == 404
