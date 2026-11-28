@@ -46,7 +46,11 @@ DEVICES = ("pc", "mobile", "tv")
 MAX_FILE_BYTES = 4_000_000
 MAX_FILES = 200
 MAX_ZIP_BYTES = 40_000_000
+MAX_PAGE_BYTES = 900_000
 ZIP_SUFFIXES = (".txt", ".json", ".csv")
+
+STATE_DIR = Path(os.getenv("STATE_DIR", "/tmp/netflix-dispo-checker"))
+SNAPSHOT_INTERVAL = 2.0
 
 LINK_TEMPLATES = {
     "pc": "https://netflix.com/?nftoken={token}",
@@ -525,7 +529,7 @@ def check_account(cookies: dict[str, str], pool: list[dict]) -> Outcome:
             if status != 200:
                 return Outcome("error", error=f"HTTP {status}")
 
-            page = response.text or ""
+            page = (response.text or "")[:MAX_PAGE_BYTES]
             info = extract_info(page)
             if not info.get("country") and not info.get("membership_status") and not info.get("plan_name"):
                 if any(marker in page for marker in LOGIN_MARKERS):
@@ -635,6 +639,7 @@ class Job:
             if self.done >= self.total:
                 self.status = "cancelled" if self.cancelled else "done"
                 self.finished_at = time.time()
+        save_snapshot(self, force=self.done >= self.total)
 
     def public(self, with_cookies: bool = False, limit: int | None = None) -> dict[str, Any]:
         with self.lock:
@@ -667,6 +672,52 @@ class Job:
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 HITS: dict[str, list[float]] = {}
+_LAST_SAVE: dict[str, float] = {}
+
+try:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
+
+
+def _snapshot_path(job_id: str) -> Path:
+    return STATE_DIR / f"{job_id}.json"
+
+
+def save_snapshot(job: Job, force: bool = False) -> None:
+    """Write the job to disk so a restart does not erase it."""
+    now = time.time()
+    if not force and now - _LAST_SAVE.get(job.id, 0.0) < SNAPSHOT_INTERVAL:
+        return
+    _LAST_SAVE[job.id] = now
+    payload = job.public(with_cookies=True)
+    payload["saved_at"] = now
+    target = _snapshot_path(job.id)
+    scratch = target.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        scratch.write_text(json.dumps(payload), encoding="utf-8")
+        scratch.replace(target)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def load_snapshot(job_id: str) -> dict | None:
+    try:
+        raw = _snapshot_path(job_id).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def drop_snapshot(job_id: str) -> None:
+    _LAST_SAVE.pop(job_id, None)
+    try:
+        _snapshot_path(job_id).unlink()
+    except OSError:
+        pass
 
 
 def _purge() -> None:
@@ -675,6 +726,15 @@ def _purge() -> None:
         for job_id, job in list(JOBS.items()):
             if job.status in {"done", "cancelled"} and (job.finished_at or job.created_at) < limit:
                 JOBS.pop(job_id, None)
+                drop_snapshot(job_id)
+        if STATE_DIR.is_dir():
+            for stale in STATE_DIR.glob("*.json"):
+                try:
+                    if stale.stat().st_mtime < limit:
+                        stale.unlink()
+                        _LAST_SAVE.pop(stale.stem, None)
+                except OSError:
+                    continue
 
 
 def _active() -> int:
@@ -746,6 +806,7 @@ def _run(job: Job) -> None:
         if job.status in {"queued", "running"}:
             job.status = "cancelled" if job.cancelled else "done"
         job.finished_at = job.finished_at or time.time()
+        save_snapshot(job, force=True)
 
 
 def start_job(accounts: list[dict[str, str]], sources: list[str], devices: list[str], concurrency: int, proxies: list[dict]) -> Job:
@@ -934,9 +995,22 @@ async def create_job_files(
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_token)])
 async def read_job(job_id: str, limit: int = 300) -> dict:
     job = JOBS.get(job_id)
-    if job is None:
+    if job is not None:
+        return job.public(with_cookies=True, limit=limit)
+
+    snapshot = load_snapshot(job_id)
+    if snapshot is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job.public(with_cookies=True, limit=limit)
+
+    results = snapshot.get("results") or []
+    if limit > 0:
+        results = results[:limit]
+    snapshot["results"] = results
+    snapshot["shown"] = len(results)
+    snapshot["recovered"] = True
+    if snapshot.get("status") in {"queued", "running"}:
+        snapshot["status"] = "lost"
+    return snapshot
 
 
 @app.get("/api/jobs/{job_id}/report.txt", dependencies=[Depends(require_token)], response_class=PlainTextResponse)
@@ -966,11 +1040,15 @@ async def cancel_job(job_id: str) -> dict:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+        if load_snapshot(job_id) is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        drop_snapshot(job_id)
+        return {"cancelled": job_id}
     job.cancelled = True
     if job.status in {"queued", "running"}:
         job.status = "cancelled"
         job.finished_at = job.finished_at or time.time()
+    save_snapshot(job, force=True)
     return {"cancelled": job_id}
 
 
