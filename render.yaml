@@ -12,17 +12,17 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: DEFAULT_CONCURRENCY
-        value: 8
+        value: 16
       - key: MAX_CONCURRENCY
-        value: 24
+        value: 48
       - key: MAX_COOKIES_PER_JOB
-        value: 150
+        value: 600
       - key: MAX_ACTIVE_JOBS
         value: 4
       - key: JOB_TTL_SECONDS
         value: 3600
       - key: REQUEST_TIMEOUT_SECONDS
-        value: 12
+        value: 8
       - key: CHECK_RETRIES
         value: 2
       - key: NFTOKEN_ATTEMPTS

@@ -5,6 +5,7 @@ const rows = new Map();
 let frame = 0;
 
 const setText = (node, value) => {
+  if (!node) return;
   const text = value == null || value === "" ? "—" : String(value);
   if (node.textContent !== text) node.textContent = text;
 };
@@ -145,21 +146,36 @@ function resetResults() {
   $("filters").hidden = true;
 }
 
-async function poll() {
+async function poll(attempt = 0) {
   if (!state.jobId) return;
   clearTimeout(state.timer);
+
+  let job;
   try {
-    const job = await send(`/api/jobs/${state.jobId}?limit=300`);
-    render(job);
-    if (["queued", "running"].includes(job.status)) {
-      state.timer = setTimeout(poll, 1500);
-    } else {
-      render(await send(`/api/jobs/${state.jobId}?limit=5000`));
-      $("run").disabled = false;
-      $("stop").disabled = true;
-      setStatus(job.status === "cancelled" ? "stopped" : "finished", "ok");
+    job = await send(`/api/jobs/${state.jobId}?limit=300`);
+  } catch (error) {
+    if (attempt < 10 && state.jobId) {
+      setStatus(`reconnecting… ${error.message}`);
+      state.timer = setTimeout(() => poll(attempt + 1), Math.min(6000, 600 * (attempt + 1)));
+      return;
     }
-  } catch (error) { setStatus(error.message, "error"); $("run").disabled = false; }
+    setStatus(error.message, "error");
+    $("run").disabled = false;
+    $("stop").disabled = true;
+    return;
+  }
+
+  try { render(job); } catch (error) { console.error("render failed", error); }
+
+  if (["queued", "running"].includes(job.status)) {
+    if (job.status === "running") setStatus(`scanning ${job.done}/${job.total}…`);
+    state.timer = setTimeout(() => poll(0), 1200);
+  } else {
+    try { render(await send(`/api/jobs/${state.jobId}?limit=5000`)); } catch (_) {}
+    $("run").disabled = false;
+    $("stop").disabled = true;
+    setStatus(job.status === "cancelled" ? "stopped" : "finished", "ok");
+  }
 }
 
 const rankOf = (plan) => state.config?.plans?.find((item) => item.key === plan)?.rank || 0;
@@ -181,14 +197,24 @@ function render(job) {
   scheduleRows();
 }
 
+const BUCKETS = ["valid", "free", "invalid", "error"];
+
 function renderFilters() {
   const counts = {};
   state.results.forEach((result) => { counts[result.plan] = (counts[result.plan] || 0) + 1; });
-  const plans = Object.keys(counts).sort((a, b) => rankOf(b) - rankOf(a));
+
+  const extra = Object.keys(counts)
+    .filter((plan) => !BUCKETS.includes(plan))
+    .sort((a, b) => rankOf(b) - rankOf(a));
+  const plans = [...BUCKETS, ...extra];
+
   $("filters").innerHTML = ["all", ...plans]
-    .map((plan) => `<button class="chip ${state.filter === plan ? "active" : ""}" data-plan="${plan}">${
-      plan === "all" ? `all (${state.results.length})` : `${planLabel(plan)} (${counts[plan]})`}</button>`).join("");
-  $("filters").hidden = !plans.length;
+    .map((plan) => {
+      const count = plan === "all" ? state.results.length : counts[plan] || 0;
+      const label = plan === "all" ? "all" : planLabel(plan);
+      return `<button class="chip ${state.filter === plan ? "active" : ""}${count ? "" : " empty"}" data-plan="${plan}">${label} (${count})</button>`;
+    }).join("");
+  $("filters").hidden = !state.results.length;
 }
 
 function buildRow(result) {
@@ -199,11 +225,12 @@ function buildRow(result) {
 }
 
 function paint(node, result, position) {
-  node.className = `result plan-${result.plan}`;
+  const plan = result.plan || "unknown";
+  node.className = `result plan-${plan} status-${result.status}`;
   setText(node.querySelector(".rank"), `#${position + 1}`);
   const badge = node.querySelector(".plan");
-  setText(badge, result.plan_label);
-  badge.className = `badge plan plan-${result.plan}`;
+  setText(badge, result.plan_label || result.status);
+  if (badge) badge.className = `badge plan plan-${plan}`;
   setText(node.querySelector(".country"), result.country);
   setText(node.querySelector(".source"), result.source);
   node.querySelector(".hold").hidden = !result.on_hold;
@@ -245,7 +272,9 @@ function scheduleRows() {
 
 function paintRows() {
   const container = $("results");
-  const visible = state.results.filter((result) => state.filter === "all" || result.plan === state.filter);
+  const visible = state.results.filter(
+    (result) => state.filter === "all" || result.plan === state.filter || result.status === state.filter
+  );
   const keep = new Set();
 
   if (!visible.length) {
