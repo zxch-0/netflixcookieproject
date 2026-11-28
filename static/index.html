@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Netflix Cookie Checker</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <h1>Netflix Cookie Checker</h1>
+  <div class="topbar-actions">
+    <span id="status-pill" class="pill">Prêt</span>
+    <button id="token-btn" class="ghost hidden" type="button">Jeton</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <label for="paste">Collez vos cookies (Netscape, JSON ou <code>NetflixId=...</code>). Plusieurs comptes acceptés.</label>
+    <textarea id="paste" spellcheck="false" placeholder="NetflixId=...; SecureNetflixId=...
+---
+NetflixId=...; SecureNetflixId=..."></textarea>
+    <div class="row">
+      <button id="check-btn" class="primary" type="button">Vérifier</button>
+      <button id="stop-btn" class="ghost" type="button" disabled>Arrêter</button>
+      <button id="clear-btn" class="ghost" type="button">Vider</button>
+      <span id="counter" class="counter">0 compte</span>
+    </div>
+    <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+  </section>
+
+  <section class="panel">
+    <div class="stats">
+      <div><span id="stat-total">0</span><small>Comptes</small></div>
+      <div class="ok"><span id="stat-valid">0</span><small>Valides</small></div>
+      <div class="ko"><span id="stat-invalid">0</span><small>Invalides</small></div>
+      <div class="warn"><span id="stat-error">0</span><small>Erreurs</small></div>
+    </div>
+    <div class="row">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-filter="all" type="button">Tous</button>
+        <button class="tab" data-filter="valid" type="button">Valides</button>
+        <button class="tab" data-filter="invalid" type="button">Invalides</button>
+        <button class="tab" data-filter="error" type="button">Erreurs</button>
+      </div>
+      <button id="export-btn" class="ghost" type="button">Exporter</button>
+    </div>
+    <div class="table-wrap">
+      <table id="results">
+        <thead>
+          <tr>
+            <th>#</th><th>Statut</th><th>Plan</th><th>Pays</th><th>Profil</th><th>Durée</th><th>Cookies</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="token-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Jeton d'accès</h2>
+    <p>Ce déploiement est protégé. Saisissez le jeton partagé.</p>
+    <input id="token-input" type="password" autocomplete="off" />
+    <div class="row">
+      <button id="token-save" class="primary" type="button">Enregistrer</button>
+      <button id="token-cancel" class="ghost" type="button">Annuler</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

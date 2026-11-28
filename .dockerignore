@@ -1,6 +1,11 @@
 .git
-__pycache__
-*.pyc
+.github
 .venv
 venv
-.env
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+README.md
