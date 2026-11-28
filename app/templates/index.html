@@ -7,6 +7,22 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+
+<div class="bg" aria-hidden="true">
+  <span class="blob b1"></span>
+  <span class="blob b2"></span>
+  <span class="blob b3"></span>
+  <div class="bg-grid"></div>
+</div>
+<div class="stars" aria-hidden="true"></div>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div class="watermark" aria-hidden="true">N</div>
+<div class="deco deco-tl" aria-hidden="true"></div>
+<div class="deco deco-tr" aria-hidden="true"></div>
+<div class="deco deco-bl" aria-hidden="true"></div>
+<div class="deco deco-br" aria-hidden="true"></div>
+
 <header class="topbar">
   <div class="brand"><span class="logo">N</span>
     <div><h1>Netflix Dispo Checker</h1><p class="sub">Drop cookie files or paste them, get plans sorted by tier with NFToken links.</p></div>
@@ -18,11 +34,12 @@
 </header>
 <main>
   <section class="card">
-    <div id="drop" class="drop">
-      <input id="files" type="file" multiple accept=".txt,.json,text/plain,application/json" hidden>
-      <p class="drop-title">Drop <b>.txt</b> / <b>.json</b> cookie files here</p>
+    <div id="drop" class="drop" role="button" tabindex="0" aria-label="Add cookie files">
+      <input id="files" type="file" multiple accept=".txt,.json,.csv,.zip,text/plain,application/json,application/zip" hidden>
+      <p class="drop-title">Drop <b>.txt</b> / <b>.json</b> / <b>.zip</b> cookie files here</p>
       <p class="drop-sub">or <button id="browse" class="link" type="button">browse files</button></p>
     </div>
+    <div class="file-list-head"><span id="fileCount" class="file-count"></span></div>
     <div id="fileList" class="file-list"></div>
     <label class="field"><span class="label">Or paste cookies</span>
       <textarea id="cookies" spellcheck="false" placeholder="Netscape, JSON export or NetflixId=...;SecureNetflixId=...
@@ -49,7 +66,7 @@ Files and pasted text are combined in the same run."></textarea>
     </div>
   </section>
   <section id="progressWrap" class="card" hidden>
-    <div class="progress-head"><strong id="progressText">0 / 0</strong><span id="counters" class="counters"></span></div>
+    <div class="progress-head"><strong id="progressText">0 / 0</strong><span id="shownInfo" class="shown"></span><span id="counters" class="counters"></span></div>
     <div class="bar"><div id="bar" class="bar-fill"></div></div>
     <div class="actions"><a id="dlTxt" class="ghost" href="#">Download TXT</a><a id="dlJson" class="ghost" href="#">Download JSON</a></div>
   </section>
