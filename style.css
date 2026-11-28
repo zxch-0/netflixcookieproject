@@ -27,8 +27,6 @@ body {
   min-height: 100vh;
 }
 
-/* ---------------- fond animé ---------------- */
-
 .bg {
   position: fixed;
   inset: -20%;
@@ -191,8 +189,6 @@ body {
   50% { opacity: 1; box-shadow: 0 0 22px rgba(229, 9, 20, 0.35); }
 }
 
-/* ---------------- structure ---------------- */
-
 .topbar, .wrap { position: relative; z-index: 3; }
 
 .topbar {
@@ -276,8 +272,6 @@ body {
 
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 
-/* ---------------- import ---------------- */
-
 .drop {
   display: grid;
   place-items: center;
@@ -335,8 +329,6 @@ textarea:focus { outline: 2px solid rgba(229, 9, 20, 0.5); outline-offset: 1px; 
 .msg.ok { color: var(--ok); }
 .msg.ko { color: var(--ko); }
 
-/* ---------------- boutons ---------------- */
-
 .btn {
   appearance: none;
   border: 1px solid var(--line);
@@ -360,15 +352,11 @@ textarea:focus { outline: 2px solid rgba(229, 9, 20, 0.5); outline-offset: 1px; 
 
 .btn-ghost { background: transparent; }
 
-/* ---------------- progression / stats ---------------- */
-
 .progress { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-bottom: 14px; }
 .progress span { display: block; height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--red), #ff7a82); transition: width 0.3s ease; }
 
 .stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
 .stat em { font-style: normal; font-weight: 700; color: var(--text); }
-
-/* ---------------- table ---------------- */
 
 .table-scroll { overflow-x: auto; }
 
@@ -445,8 +433,6 @@ td.idx { color: var(--muted); width: 40px; }
 }
 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
-
-/* ---------------- responsive ---------------- */
 
 @media (max-width: 640px) {
   .topbar { padding-top: 18px; }

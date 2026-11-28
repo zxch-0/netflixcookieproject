@@ -46,23 +46,33 @@ async function loadConfig() {
   } catch (_) { setStatus("config unavailable", "error"); }
 }
 
+const ALLOWED = [".txt", ".json", ".csv", ".zip"];
+
 function addFiles(fileList) {
   const max = state.config?.max_files || 10000;
   let dropped = 0;
+  let rejected = 0;
   [...fileList].forEach((file) => {
     if (state.picked.length >= max) { dropped += 1; return; }
-    const name = file.name.toLowerCase();
-    if (!name.endsWith(".txt") && !name.endsWith(".json") && !name.endsWith(".zip") && !/text|json|zip/.test(file.type)) return;
+    const name = (file.name || "").toLowerCase();
+    const known = ALLOWED.some((ext) => name.endsWith(ext)) || /text|json|zip|csv/.test(file.type || "");
+    if (!known) { rejected += 1; return; }
     if (state.picked.some((item) => item.name === file.name && item.size === file.size)) return;
     state.picked.push(file);
   });
   renderFiles();
   if (dropped) setStatus(`${dropped} file(s) ignored, limit is ${max}`, "error");
+  else if (rejected) setStatus(`${rejected} file(s) skipped (unsupported type)`, "error");
+  else if (state.picked.length) setStatus(`${state.picked.length} file(s) ready`, "ok");
 }
 
 function renderFiles() {
-  $("fileList").innerHTML = "";
-  $("fileCount").textContent = state.picked.length ? `${state.picked.length} file(s) queued` : "";
+  const list = $("fileList");
+  if (list) list.innerHTML = "";
+  const counter = $("fileCount");
+  if (counter) counter.textContent = state.picked.length ? `${state.picked.length} file(s) queued` : "";
+  if (!list) return;
+
   const shown = state.picked.slice(0, 40);
   const fragment = document.createDocumentFragment();
   shown.forEach((file) => {
@@ -73,7 +83,9 @@ function renderFiles() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "×";
-    remove.addEventListener("click", () => {
+    remove.setAttribute("aria-label", `Remove ${file.name}`);
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
       state.picked = state.picked.filter((item) => item !== file);
       renderFiles();
     });
@@ -86,7 +98,7 @@ function renderFiles() {
     more.textContent = `+${state.picked.length - shown.length} more`;
     fragment.appendChild(more);
   }
-  $("fileList").appendChild(fragment);
+  list.appendChild(fragment);
 }
 
 async function startJob() {
@@ -103,7 +115,7 @@ async function startJob() {
     let job;
     if (state.picked.length) {
       const form = new FormData();
-      state.picked.forEach((file) => form.append("files", file));
+      state.picked.forEach((file) => form.append("files", file, file.name));
       if (cookies) form.append("cookies", cookies);
       form.append("devices", devices.join(","));
       form.append("concurrency", String(concurrency));
@@ -119,6 +131,8 @@ async function startJob() {
     $("dlTxt").href = `/api/jobs/${job.job_id}/report.txt`;
     $("dlJson").href = `/api/jobs/${job.job_id}/report.json`;
     setStatus(`${job.total} account(s) queued${job.skipped ? ` (${job.skipped} skipped)` : ""}`, "ok");
+    state.picked = [];
+    renderFiles();
     poll();
   } catch (error) { $("run").disabled = false; setStatus(error.message, "error"); }
 }
@@ -152,12 +166,17 @@ const rankOf = (plan) => state.config?.plans?.find((item) => item.key === plan)?
 const planLabel = (plan) => state.config?.plans?.find((item) => item.key === plan)?.label || plan;
 
 function render(job) {
-  state.results = job.results;
-  $("bar").style.width = `${job.total ? Math.round((job.done / job.total) * 100) : 0}%`;
-  $("progressText").textContent = `${job.done} / ${job.total}`;
-  $("shownInfo").textContent = job.total > job.results.length ? `top ${job.results.length} shown` : "";
+  state.results = Array.isArray(job.results) ? job.results : [];
+  const total = job.total || 0;
+  $("bar").style.width = `${total ? Math.round((job.done / total) * 100) : 0}%`;
+  $("progressText").textContent = `${job.done} / ${total}`;
+  const shownInfo = $("shownInfo");
+  if (shownInfo) {
+    shownInfo.textContent = total > state.results.length ? `top ${state.results.length} shown` : "";
+  }
+  const counters = job.counters || {};
   $("counters").innerHTML = ["valid", "free", "invalid", "error"]
-    .map((key) => `<span>${key} <b>${job.counters[key]}</b></span>`).join("");
+    .map((key) => `<span>${key} <b>${counters[key] || 0}</b></span>`).join("");
   renderFilters();
   scheduleRows();
 }
@@ -270,9 +289,9 @@ async function stopJob() {
 
 $("run").addEventListener("click", startJob);
 $("stop").addEventListener("click", stopJob);
-$("browse").addEventListener("click", () => $("files").click());
+$("browse").addEventListener("click", (event) => { event.stopPropagation(); $("files").click(); });
 $("files").addEventListener("change", (event) => { addFiles(event.target.files); event.target.value = ""; });
-$("clear").addEventListener("click", () => { state.picked = []; renderFiles(); });
+$("clear").addEventListener("click", () => { state.picked = []; renderFiles(); setStatus(""); });
 $("concurrency").addEventListener("input", (event) => { $("concOut").textContent = event.target.value; });
 $("token").addEventListener("change", (event) => { state.token = event.target.value.trim(); localStorage.setItem("nfx_token", state.token); });
 $("filters").addEventListener("click", (event) => {
@@ -287,6 +306,13 @@ const drop = $("drop");
 ["dragenter", "dragover"].forEach((type) => drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach((type) => drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", (event) => { if (event.dataTransfer?.files) addFiles(event.dataTransfer.files); });
-drop.addEventListener("click", (event) => { if (event.target === drop) $("files").click(); });
+drop.addEventListener("click", (event) => {
+  if (event.target.closest("#browse")) return;
+  $("files").click();
+});
+drop.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") { event.preventDefault(); $("files").click(); }
+});
 
 loadConfig();
+renderFiles();

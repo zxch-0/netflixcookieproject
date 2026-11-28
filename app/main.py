@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import json
 import os
 import random
@@ -12,6 +13,7 @@ import threading
 import time
 import unicodedata
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -43,6 +45,8 @@ COOKIE_NAMES = ("NetflixId", "SecureNetflixId", "nfvdid", "OptanonConsent")
 DEVICES = ("pc", "mobile", "tv")
 MAX_FILE_BYTES = 4_000_000
 MAX_FILES = 200
+MAX_ZIP_BYTES = 40_000_000
+ZIP_SUFFIXES = (".txt", ".json", ".csv")
 
 LINK_TEMPLATES = {
     "pc": "https://netflix.com/?nftoken={token}",
@@ -278,6 +282,56 @@ def merge_accounts(texts: list[str]) -> list[dict[str, str]]:
                 seen.add(netflix_id)
                 accounts.append(cookies)
     return accounts
+
+
+def collect(texts: list[str], sources: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+    """Accounts plus their sources, deduplicated and kept aligned."""
+    seen: set[str] = set()
+    accounts: list[dict[str, str]] = []
+    kept: list[str] = []
+    for position, text in enumerate(texts):
+        source = sources[position] if position < len(sources) else "input"
+        for cookies in parse_cookies(text):
+            netflix_id = cookies.get("NetflixId", "")
+            if not netflix_id or netflix_id in seen:
+                continue
+            seen.add(netflix_id)
+            accounts.append(cookies)
+            kept.append(source)
+    return accounts, kept
+
+
+def expand_zip(data: bytes, texts: list[str], sources: list[str], budget: int) -> tuple[int, int]:
+    """Extract readable cookie entries from an in-memory zip. Returns (skipped, budget)."""
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError):
+        return 1, budget
+
+    skipped = 0
+    with archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            if not info.filename.lower().endswith(ZIP_SUFFIXES):
+                skipped += 1
+                continue
+            if budget <= 0:
+                skipped += 1
+                continue
+            try:
+                raw = archive.read(info)[:budget]
+            except (zipfile.BadZipFile, RuntimeError, OSError):
+                skipped += 1
+                continue
+            budget -= len(raw)
+            text = decode_file(raw)
+            if not parse_cookies(text):
+                skipped += 1
+                continue
+            texts.append(text)
+            sources.append(info.filename)
+    return skipped, budget
 
 
 def decode_file(data: bytes) -> str:
@@ -582,9 +636,12 @@ class Job:
                 self.status = "cancelled" if self.cancelled else "done"
                 self.finished_at = time.time()
 
-    def public(self, with_cookies: bool = False) -> dict[str, Any]:
+    def public(self, with_cookies: bool = False, limit: int | None = None) -> dict[str, Any]:
         with self.lock:
             results = sorted(self.results, key=sort_key)
+        matched = len(results)
+        if limit is not None and limit > 0:
+            results = results[:limit]
         keys = (
             "index", "status", "plan", "plan_label", "country", "email", "name", "streams",
             "quality", "price", "profiles", "extra_member", "on_hold", "nftoken",
@@ -595,6 +652,8 @@ class Job:
             "status": self.status,
             "total": self.total,
             "done": self.done,
+            "matched": matched,
+            "shown": len(results),
             "sources": self.sources,
             "counters": self.counters(),
             "results": [{key: result.get(key) for key in keys} for result in results],
@@ -823,42 +882,48 @@ async def create_job(payload: JobRequest, request: Request) -> JSONResponse:
 @app.post("/api/jobs/files", dependencies=[Depends(require_token)])
 async def create_job_files(
     request: Request,
-    files: list[UploadFile] = File(default_factory=list),
+    files: list[UploadFile] | None = File(default=None),
     cookies: str | None = Form(default=None),
     devices: str = Form(default="pc"),
     concurrency: int | None = Form(default=None),
     proxies: str | None = Form(default=None),
 ) -> JSONResponse:
-    if not files and not (cookies or "").strip():
+    uploads = list(files or [])
+    if not uploads and not (cookies or "").strip():
         raise HTTPException(status_code=422, detail="Attach at least one cookie file")
 
     texts: list[str] = []
     sources: list[str] = []
     skipped = 0
+    budget = MAX_ZIP_BYTES
 
-    for upload in files[:MAX_FILES]:
-        data = await upload.read()
+    for upload in uploads[:MAX_FILES]:
+        name = upload.filename or "file"
+        data = await upload.read(MAX_FILE_BYTES)
         if not data:
             skipped += 1
             continue
-        text = decode_file(data[:MAX_FILE_BYTES])
-        accounts = parse_cookies(text)
-        if not accounts:
+        if name.lower().endswith(".zip") or data[:2] == b"PK":
+            extra, budget = expand_zip(data, texts, sources, budget)
+            skipped += extra
+            continue
+        text = decode_file(data)
+        if not parse_cookies(text):
             skipped += 1
             continue
         texts.append(text)
-        sources.extend([upload.filename or "file"] * len(accounts))
-    skipped += max(0, len(files) - MAX_FILES)
+        sources.append(name)
+    skipped += max(0, len(uploads) - MAX_FILES)
 
     if (cookies or "").strip():
-        text = cookies or ""
-        texts.append(text)
-        sources.extend(["paste"] * len(parse_cookies(text)))
+        texts.append(cookies or "")
+        sources.append("paste")
 
+    accounts, kept = collect(texts, sources)
     return _enqueue(
         request,
-        merge_accounts(texts),
-        sources,
+        accounts,
+        kept,
         [item for item in devices.split(",") if item.strip()],
         concurrency,
         proxies,
@@ -867,11 +932,11 @@ async def create_job_files(
 
 
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_token)])
-async def read_job(job_id: str) -> dict:
+async def read_job(job_id: str, limit: int = 300) -> dict:
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job.public()
+    return job.public(with_cookies=True, limit=limit)
 
 
 @app.get("/api/jobs/{job_id}/report.txt", dependencies=[Depends(require_token)], response_class=PlainTextResponse)
@@ -899,10 +964,13 @@ async def report_json(job_id: str) -> JSONResponse:
 @app.delete("/api/jobs/{job_id}", dependencies=[Depends(require_token)])
 async def cancel_job(job_id: str) -> dict:
     with JOBS_LOCK:
-        job = JOBS.pop(job_id, None)
+        job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     job.cancelled = True
+    if job.status in {"queued", "running"}:
+        job.status = "cancelled"
+        job.finished_at = job.finished_at or time.time()
     return {"cancelled": job_id}
 
 
